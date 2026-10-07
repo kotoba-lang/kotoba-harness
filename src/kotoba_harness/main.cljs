@@ -27,7 +27,8 @@
           ("known" "wrong") (let [bodies (get project (keyword method))]
                               (.then (verify! (keys (:checks project)) bodies) (fn [r] {:bodies bodies :verification r}))))
         (.then (fn [r] (assoc r :status (if (get-in r [:verification :passed]) "verified" "rejected"))))
-        (.catch (fn [e] {:status "refused" :error (pr-str (or (dissoc (c/refusal e) :answer) (.-message e)))}))
+        (.catch (fn [e] {:status "refused" :error (pr-str (or (dissoc (c/refusal e) :answer) (.-message e)))
+                         :refused-answer (:answer (c/refusal e))}))
         (.then (fn [r]
                  (let [receipt (merge {:format "kotoba-harness.receipt/v1" :project (:id project) :title (:title project)
                                        :method method :escalate (not= "0" (env "KOTOBA_HARNESS_ESCALATE")) :date (.toISOString (js/Date.)) :cases (:cases project)

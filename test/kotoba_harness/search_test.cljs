@@ -56,6 +56,9 @@
     (is (= {:id "a"} (s/admit choices {:choice "a" :confidence 0.6 :probabilities {"a" 0.6 "b" 0.4}})))
     (is (thrown? js/Error (s/admit choices {:choice "b" :confidence 0.4 :probabilities {"a" 0.6 "b" 0.4}})))
     (is (thrown? js/Error (s/admit choices {:choice "a" :confidence 0.6 :probabilities {"a" 0.6}})))
+    ;; two-decimal rounding as Jev reports it (observed 0.55 0.33 0.02 0 0.09 = 0.99)
+    (is (= {:id "a"} (s/admit choices {:choice "a" :confidence 0.6 :probabilities {"a" 0.6 "b" 0.39}})))
+    (is (thrown? js/Error (s/admit choices {:choice "a" :confidence 0.6 :probabilities {"a" 0.6 "b" 0.3}})))
     (is (thrown? js/Error (s/admit choices {:choice "c" :confidence 0.6 :probabilities {"a" 0.6 "b" 0.4}})))))
 
 (deftest catalog-refusals-and-splice

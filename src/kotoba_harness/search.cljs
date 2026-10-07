@@ -31,13 +31,14 @@
 
 (defn admit
   "The answer must be a distribution over exactly the offered labels whose
-  winner is the choice."
+  winner is the choice. Jev reports probabilities rounded to two decimals, so
+  the sum may miss 1 by up to 0.005 per label."
   [choices {:keys [choice probabilities confidence] :as answer}]
   (let [labels (set (map :id choices))]
     (when-not (and (contains? labels choice) (= labels (set (keys probabilities)))
                    (every? #(and (number? %) (<= 0 % 1)) (vals probabilities))
                    (number? confidence) (<= 0 confidence 1)
-                   (< (js/Math.abs (- 1 (reduce + (vals probabilities)))) 1e-6)
+                   (<= (js/Math.abs (- 1 (reduce + (vals probabilities)))) (+ 1e-9 (* 0.005 (count labels))))
                    (every? #(<= % (get probabilities choice)) (vals probabilities)))
       (c/refuse! :invalid-distribution {:answer (dissoc answer :usage)}))
     (first (filter #(= choice (:id %)) choices))))
@@ -96,6 +97,7 @@
                 (-> (decide! req)
                     (.then (fn [answer]
                              (swap! audit conj {:stage stage-id :function unit :choice (:choice answer) :confidence (:confidence answer)
+                                                :probabilities (:probabilities answer) :offered (mapv :id choices)
                                                 :model (:model answer) :usage (:usage answer)
                                                 :wall-ms (- (.now js/performance) started)})
                              (try (admit choices answer)
