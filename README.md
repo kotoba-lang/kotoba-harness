@@ -14,20 +14,22 @@ toolchain rather than a Clojure host.
 
 1. A project (`projects/*.edn`) declares typed functions (`:i64`, `:bool`),
    literals, and **stages** with their admitted operations, admitted calls and
-   dependencies. The operation catalog is a whitelist of kotoba typed-subset
-   heads (`+ - * min max < = if`).
+   dependencies; a function may carry its own `:goal`. The operation catalog is
+   a whitelist of kotoba typed-subset heads (`+ - * min max < = if`).
 2. Stages run in dependency order. Inside a stage, each decision fills the
    first open hole. The policy sees the goal, the stage goal, the partial
    assembly as kotoba source (`?` = this hole, `_` = later holes), the hole's
    **role** (e.g. "argument 1 of 2 in the call to budget-left: the parameter
    used :i64"), frozen functions from earlier stages, and previously rejected
    assemblies with their failure counts.
-3. A completed stage is spliced into the baseline module (only the stub lines
+3. Each completed function is spliced into the baseline module (only the stub lines
    change; every other byte, e.g. `marker`, is preserved) and verified:
    `kotoba -M check` on the module → module + fixed checks compiled with
    `kotoba -M compile --target wasm32-browser --policy {:budgets {:fuel N}}` →
    run through amu's `instantiateKotoba`; `main` returns the number of failed
-   cases and must be `0`. A verified stage's AST is frozen.
+   cases and must be `0`. Verification is per function (with the functions
+   already frozen), so a failure is never blamed on a sibling in the same
+   stage; a verified function's AST is frozen.
 4. **Backtracking reaches the outermost choice.** A verification failure
    rewinds to the most recent decision with an untried alternative. When the
    policy answers `stop` at a hole ("no candidate here can be right"), the

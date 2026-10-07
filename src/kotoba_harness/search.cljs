@@ -1,6 +1,7 @@
 (ns kotoba-harness.search
-  "Staged System One search. Stages run in dependency order; a verified stage's
-  AST is frozen. Inside a stage the policy fills one typed hole per decision.
+  "Staged System One search. Stages run in dependency order and functions in
+  stage order; each function is verified on its own and frozen once it passes.
+  Inside a function the policy fills one typed hole per decision.
 
   Backtracking:
   - verification failure rewinds to the most recent decision that still has an
@@ -60,6 +61,7 @@
     {:goal (:goal program)
      :stage {:id (:id s) :goal (:goal s)}
      :function (str (c/signature f) "...)")
+     :function-goal (:goal f)
      :assembly (c/render (get-in focused [:bodies (:id f)]) "_")
      :hole-type (:hole (:node target))
      :hole-role (hole-role program state target)
@@ -67,14 +69,15 @@
      :rejected-assemblies rejected
      :page page}))
 
-(defn run-stage!
-  "Assemble and verify one stage. decide! gets {:state string :instructions
+(defn run-unit!
+  "Assemble and verify one function (UNIT); earlier functions are frozen. decide! gets {:state string :instructions
   string :criteria {id description}} and returns a promise of an answer.
   verify! gets {id kotoba-body} for every assembled function and returns a
   promise of {:passed bool :failures string}."
-  [program stage-id fixed decide! verify! {:keys [max-attempts audit attempts escalate?]}]
-  (let [state0 {:bodies (into {} (map (fn [f] [(:id f) (cond (contains? fixed (:id f)) (get fixed (:id f))
-                                                              (= stage-id (:stage f)) (c/hole (:returns f) 0)
+  [program unit fixed decide! verify! {:keys [max-attempts audit attempts escalate?]}]
+  (let [stage-id (:stage (c/function program unit))
+        state0 {:bodies (into {} (map (fn [f] [(:id f) (cond (contains? fixed (:id f)) (get fixed (:id f))
+                                                              (= unit (:id f)) (c/hole (:returns f) 0)
                                                               :else {:kind :pending})])
                                        (:functions program)))}
         fixed-sources (into {} (map (fn [[id ast]] [id (c/render ast)]) fixed))
@@ -84,15 +87,15 @@
               (if-let [i (last (keep-indexed (fn [i f] (when (seq (:remaining f)) i)) @frames))]
                 (let [frame (nth @frames i)]
                     (reset! frames (subvec @frames 0 i))
-                    (swap! audit conj {:stage stage-id :event cause :rewound-to (:choice frame)})
+                    (swap! audit conj {:stage stage-id :function unit :event cause :rewound-to (:choice frame)})
                     (step (:state frame) (:excluded frame) 0))
-                (c/refuse! :search-exhausted {:stage stage-id})))
+                (c/refuse! :search-exhausted {:stage stage-id :function unit})))
             (ask [req choices retry]
               (when (>= (decisions) (:max-decisions program)) (c/refuse! :decision-budget))
               (let [started (.now js/performance)]
                 (-> (decide! req)
                     (.then (fn [answer]
-                             (swap! audit conj {:stage stage-id :choice (:choice answer) :confidence (:confidence answer)
+                             (swap! audit conj {:stage stage-id :function unit :choice (:choice answer) :confidence (:confidence answer)
                                                 :model (:model answer) :usage (:usage answer)
                                                 :wall-ms (- (.now js/performance) started)})
                              (try (admit choices answer)
@@ -114,7 +117,7 @@
                         (.then (fn [chosen]
                                  (case (:kind chosen)
                                    :page (step state excluded (inc page))
-                                   :stop (if escalate? (rewind! :stop-escalation) (c/refuse! :policy-stopped {:stage stage-id}))
+                                   :stop (if escalate? (rewind! :stop-escalation) (c/refuse! :policy-stopped {:stage stage-id :function unit}))
                                    (do (swap! frames conj {:state state :choice (:id chosen)
                                                            :excluded (conj excluded (:id chosen))
                                                            :remaining (vec (remove #(= (:id chosen) (:id %)) legal))})
@@ -125,23 +128,25 @@
                     n (swap! n-attempts inc)]
                 (-> (verify! bodies)
                     (.then (fn [v]
-                             (swap! attempts conj {:stage stage-id :attempt n :bodies bodies :verification v})
+                             (swap! attempts conj {:stage stage-id :function unit :attempt n :bodies bodies :verification v})
                              (cond (:passed v) {:state state :bodies bodies :verification v}
-                                   (>= n max-attempts) (c/refuse! :stage-rejected {:stage stage-id})
+                                   (>= n max-attempts) (c/refuse! :stage-rejected {:stage stage-id :function unit})
                                    :else (do (swap! rejected conj {:assembly (into {} (filter #(not (contains? fixed (key %))) bodies))
                                                                    :failed-cases (:failures v)})
                                              (rewind! :verification-failed))))))))]
       (step state0 #{} 0))))
 
 (defn run!
-  "All stages in dependency order. Returns a promise of {:bodies :verification}."
+  "Every function, stage by stage in dependency order; each function is
+  verified and frozen as soon as its body is complete, so a failure is never
+  attributed to a sibling. Returns a promise of {:bodies :verification}."
   [program decide! verify! {:keys [max-attempts escalate?] :or {max-attempts 6 escalate? true}} audit attempts]
   (letfn [(go [ids fixed last-v]
             (if (empty? ids)
               (js/Promise.resolve {:bodies (into {} (map (fn [[id ast]] [id (c/render ast)]) fixed)) :verification last-v})
-              (-> (run-stage! program (first ids) fixed decide! verify! {:max-attempts max-attempts :escalate? escalate? :audit audit :attempts attempts})
+              (-> (run-unit! program (first ids) fixed decide! verify! {:max-attempts max-attempts :escalate? escalate? :audit audit :attempts attempts})
                   (.then (fn [{:keys [state verification]}]
                            (go (rest ids)
                                (into {} (remove #(= :pending (:kind (val %))) (:bodies state)))
                                verification))))))]
-    (go (:stage-order program) {} nil)))
+    (go (map :id (c/ordered-functions program)) {} nil)))

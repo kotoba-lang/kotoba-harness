@@ -47,7 +47,8 @@
                    (integer? (:candidate-limit p)) (<= 4 (:candidate-limit p) 16))
       (refuse! :program-shape))
     (doseq [f fns]
-      (when-not (and (identifier? (:id f)) (contains? stage-ids (:stage f)) (contains? types (:returns f))
+      (when-not (and (identifier? (:id f)) (contains? stage-ids (:stage f))
+                     (or (nil? (:goal f)) (and (string? (:goal f)) (<= 1 (count (:goal f)) 1024))) (contains? types (:returns f))
                      (vector? (:args f)) (<= (count (:args f)) 8)
                      (= (count (:args f)) (count (set (map :name (:args f)))))
                      (every? #(and (identifier? (:name %)) (contains? types (:type %))) (:args f)))

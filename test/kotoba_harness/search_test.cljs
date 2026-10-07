@@ -77,3 +77,23 @@
         (.then (fn [_] (is false "expected refusal")))
         (.catch (fn [e] (is (= :policy-stopped (:reason (c/refusal e))))))
         (.finally done))))
+
+(deftest siblings-in-one-stage-are-verified-separately
+  ;; Two functions share a stage. A wrong first function is rejected and
+  ;; repaired before the second is assembled, so backtracking never works on
+  ;; the sibling that was not at fault.
+  (async done
+    (let [p (c/compile-program {:goal "g" :stages [{:id "s" :goal "g" :operations ["less-than"] :calls [] :depends-on []}]
+                                :functions [{:id "a" :stage "s" :goal "x < y" :args [{:name "x" :type :i64} {:name "y" :type :i64}] :returns :bool}
+                                            {:id "b" :stage "s" :args [{:name "x" :type :i64} {:name "y" :type :i64}] :returns :bool}]
+                                :literals [] :max-decisions 32 :max-depth 3 :candidate-limit 8})
+          want {"a" "(< x y)" "b" "(< y x)"} requests (atom []) attempts (atom [])
+          verify (fn [bodies] (js/Promise.resolve {:passed (every? (fn [[k v]] (= v (want k))) bodies) :failures "1"}))]
+      (-> (s/run! p (scripted ["less-than" "argument-y" "argument-x" "stop" "argument-x" "argument-y"
+                               "less-than" "argument-y" "argument-x"] requests) verify {} (atom []) attempts)
+          (.then (fn [r]
+                   (is (= want (:bodies r)))
+                   (is (= [["a" #{"a"}] ["a" #{"a"}] ["b" #{"a" "b"}]] (mapv (juxt :function (comp set keys :bodies)) @attempts)))
+                   (is (re-find #":function-goal \"x < y\"" (:state (first @requests))))))
+          (.catch (fn [e] (is false (str e (pr-str (c/refusal e))))))
+          (.finally done)))))
